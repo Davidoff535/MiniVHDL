@@ -1,0 +1,326 @@
+package MiniVHDL;
+import java.util.ArrayList;
+import java.util.List;
+import MiniVHDL.Circuit.*;
+import MiniVHDL.Circuit.Expression.*;
+import MiniVHDL.Circuit.Wire.*;
+
+COMPILER MiniVHDL
+
+Circuit circuit;
+
+IGNORECASE
+
+CHARACTERS
+  letter = 'A'..'Z' + 'a'..'z' .
+  digit = '0'..'9' .
+  whitespace = ' ' + '\t' + '\n' + '\r' .
+
+TOKENS
+  ident = letter { letter | digit | "_" } .
+  number = digit { digit } .
+  colon = ":" .
+
+COMMENTS
+  FROM "--" TO "\r\n"
+
+IGNORE whitespace
+
+PRODUCTIONS
+
+MiniVHDL<>                                              		(. circuit=new Circuit(); Entity entity; .)
+  =
+  {LibraryClause | UseClause | EntityDecl<out entity>   		(. circuit.entities.add(entity); .)
+   | ArchitectureDecl<circuit>}
+                                                                (. String undriven= circuit.getUndrivenWires();
+																   if(!undriven.isEmpty()){
+																       SemErr("The following wires are not driven:\n%s".formatted(undriven));
+																   } .)
+.
+
+LibraryClause
+  =
+  "LIBRARY" "IEEE" ";"
+.
+
+UseClause
+  =
+  "USE" "IEEE.STD_LOGIC_1164.ALL" ";"
+.
+
+EntityDecl<out Entity entity>                           		(. List<Port> ports; .)
+  = "ENTITY" ident                                      		(. String name = t.val.toLowerCase(); .)
+  "IS" "PORT" "(" PortList<out ports> ")" ";"
+  "END" ["ENTITY"] [ ident                              		(. if(!t.val.toLowerCase().equals(name)){
+																       SemErr("Name not matching declaration");
+																   } .)
+   ] ";"                        								(. entity=new Entity(name, ports); .)
+.
+
+PortList<out List<Port> ports>                          		(. List<Port> ports2; .)
+  = PortDecl<out ports> { ";" PortDecl<out ports2>      		(. ports.addAll(ports2); .)
+    }
+.
+
+PortDecl<out List<Port> ports>                          		(. ports = new ArrayList<>(); Port.Direction dir; List<String> idents; int[] length_offset; .)
+  =
+  identList<out idents> ":" Direction<out dir>
+  SubtypeInd<out length_offset>         						(. for (String ident : idents) {
+																       ports.add(new Port(ident, dir, length_offset[0], length_offset[1]));
+																   } .)
+.
+
+identList<out List<String> idents>      						(. idents = new ArrayList<>(); .)
+  =
+  ident                                 						(. idents.add(t.val.toLowerCase()); .)
+  { "," ident                           						(. idents.add(t.val.toLowerCase()); .)
+  }
+.
+
+Direction<out Port.Direction dir>            					(. dir = null; .)
+  =
+  "IN"                                  						(. dir = Port.Direction.IN; .)
+  | "OUT"                               						(. dir = Port.Direction.OUT; .)
+.
+
+SubtypeInd<out int[] length_offset>     						(. length_offset = new int[2]; .)
+  =
+  "STD_ULOGIC"                          						(. length_offset[0] = 1; length_offset[1] = 0; .)
+  | StdLogicVectorType<out length_offset>
+.
+
+StdLogicVectorType<out int[] length_offset>             		(. length_offset = new int[2]; .)
+  =
+  "STD_ULOGIC_VECTOR" "(" number                        		(. int start = Integer.parseInt(t.val); .)
+  "DOWNTO" number                                      		    (. int end = Integer.parseInt(t.val); .)
+  ")"
+																(. length_offset[0] = start - end + 1; .)
+																(. length_offset[1] = end; .)
+.
+
+ArchitectureDecl<Circuit circuit>   							(. Component component; List<Signal> signals; .)
+  =
+  "ARCHITECTURE" ident              							(. String architectureName = t.val.toLowerCase();
+																   Architecture architecture = new Architecture(architectureName); .)
+  "OF" ident                        							(. String entityName = t.val.toLowerCase();
+																   Entity entity = circuit.getEntityByName(entityName);
+																   if (entity == null) {
+																       SemErr("referenced entity does not exist");
+																   } else {
+																       entity.architecture = architecture;
+																       architecture.entity = entity;
+																   } .)
+  "IS"
+  { ComponentDecl<out component, circuit>     				    (. architecture.components.add(component); .)
+  }
+  { SignalDecl<out signals>                   				    (. architecture.signals.addAll(signals); .)
+  }
+  "BEGIN"
+  { ConcurrentStmt<architecture> }
+  "END" ["ARCHITECTURE"] [ ident                				(. if(!t.val.toLowerCase().equals(architectureName)){
+																       SemErr("Name not matching declaration");
+																   } .)
+   ] ";"
+.
+
+ComponentDecl<out Component component, Circuit circuit> 		(. List<Port> ports; .)
+  =
+  "COMPONENT" ident                                   		    (. String name = t.val.toLowerCase();
+																   Entity componentEntity = circuit.getEntityByName(name);
+																   if(componentEntity==null){
+																       SemErr("There is no matching entity to this component");
+																   } .)
+  ["is"] "PORT" "(" PortList<out ports> ")" ";"       		    (. if(componentEntity!=null){
+																       List<Port> onlyInEntity = componentEntity.ports.stream()
+																           .filter(port -> !ports.contains(port))
+																           .toList();
+
+																       List<Port> onlyInComponent = ports.stream()
+																           .filter(port -> !componentEntity.ports.contains(port))
+																           .toList();
+
+
+																       if (!onlyInEntity.isEmpty()) {
+																           onlyInEntity.forEach(port -> SemErr("Port \"" + port.name+"\" of referenced entity is not defined equal in component"));
+																       }
+																       if (!onlyInComponent.isEmpty()) {
+																           onlyInComponent.forEach(port -> SemErr("Port \"" + port.name+"\" is not defined equal in referenced entity"));
+																       }
+																   } .)
+  "END" "COMPONENT" [ident                              		(. if(!t.val.toLowerCase().equals(name)){
+																       SemErr("Name not matching declaration");
+																   } .)
+  ] ";"                                                   		(. component=new Component(name, ports); .)
+.
+
+SignalDecl<out List<Signal> signals>        					(. List<String> idents; int[] length_offset; .)
+  =
+  "SIGNAL" identList<out idents> ":"
+  SubtypeInd<out length_offset> ";"         					(. signals = new ArrayList<>();
+																   for (String ident : idents) {
+																       signals.add(new Signal(ident, length_offset[0], length_offset[1]));
+																   } .)
+
+.
+
+ConcurrentStmt<Architecture architecture>   					(. Token la2 = scanner.Peek(); .)
+  =
+  IF (la2.kind == _colon) InstantiationStmt<architecture>
+  | AssignmentStmt<architecture>
+.
+
+AssignmentStmt<Architecture architecture>       				(. Expression to; Expression from; .)
+  =
+  Indexedident<out to, architecture>
+  "<=" Expression<out from, architecture>        				(. if (from!=null && to!=null &&from.width != to.width) {
+																       SemErr("assignment operands are not of equal width");
+																   } .)
+  ";"                                           				(. if(to!=null&&!to.isAssignable()){
+																       SemErr("Cannot assign to expression");
+																   }
+																   if(to!=null&&architecture.isAlreadyDriven(to)){
+																       SemErr("Assignment destination is already driven");
+																   }
+																   architecture.connections.add(new Connection(from, to)); .)
+.
+
+Expression<out Expression expr, Architecture architecture>  	(. OperationExpression.Operation op=null; Expression right; .)
+ =
+  SimpleTerm<out expr, architecture> { ( "XOR"              	(. op=OperationExpression.Operation.XOR; .)
+  | "AND"                                                  	    (. op=OperationExpression.Operation.AND; .)
+  | "OR"                                                    	(. op=OperationExpression.Operation.OR; .)
+  | "NAND"                                                     	(. op=OperationExpression.Operation.NAND; .)
+  | "NOR"                                                      	(. op=OperationExpression.Operation.NOR; .)
+  | "XNOR"                                                     	(. op=OperationExpression.Operation.XNOR; .)
+  | "&"                                                    	    (. op=OperationExpression.Operation.CAT; .)
+  ) SimpleTerm<out right, architecture>                    	    (. if (op!=OperationExpression.Operation.CAT && expr.width != right.width) {
+																       SemErr("operands are not of equal width");
+																   }
+																   expr = new OperationExpression(op!=OperationExpression.Operation.CAT?expr.width:expr.width+right.width, expr, right, op); .)
+  }
+.
+
+SimpleTerm<out Expression expr, Architecture architecture>  	(. expr=null; boolean negate=false; .)
+ =
+ ["NOT"                                                     	(. negate=true; .)
+ ]
+ (Indexedident<out expr, architecture>
+ | number                                                   	(. int start = Integer.parseInt(t.val); .)
+ "downto" number                                            	(. int end = Integer.parseInt(t.val); .)
+  "=>" ident                                                	(. String ident = t.val.toLowerCase();
+																   Expression source = architecture.getWireFromIdent(ident);
+																   if (source == null) {
+																       SemErr("port or signal not defined");
+																   } .)
+  [ "(" number                                              	(. int index = Integer.parseInt(t.val); .)
+  ")"                                                       	(. if(source!=null){
+																       int offset = index - source.getIndexOffset();
+																       if(offset>source.width||offset<0){
+																           SemErr("Index out of bounds");
+																       }
+																       source = new WidthExpression(1, source, offset);
+																   }.)
+  ]                                                          	(. if (source != null && source.width != 1) {
+																       SemErr("width expansion source is not of length 1");
+																   }
+																   expr = new WidthExpression(start - end + 1, source, end); .)
+  | "(" Expression<out expr, architecture> ")")
+																(. if(negate&&expr!=null) {
+																       expr=new NegationExpression(expr.width,expr);
+																   } .)
+.
+
+InstantiationStmt<Architecture architecture>
+  =
+  ident                                         				(. String instanceName = t.val.toLowerCase(); .)
+  colon ident                                   				(. String componentName = t.val.toLowerCase();
+																   Component component = architecture.getComponentFromIdent(componentName);
+																   if (component == null) {
+																       SemErr("component not defined");
+																       component=new Component("", new ArrayList<>());
+																   }
+																   Instance instance = new Instance(instanceName, component);
+																   architecture.instances.add(instance); .)
+  "PORT" "MAP" "("
+  PortMap<architecture, instance>
+  ")" ";"
+.
+
+Indexedident<out Expression expr, Architecture architecture>    (. expr = null; .)
+  =
+  (ident                                         				(. expr = architecture.getWireFromIdent(t.val.toLowerCase());
+																   if(expr==null){
+																       SemErr("port or signal not defined");
+																   } .)
+  ["(" number                                   				(. int start = Integer.parseInt(t.val);
+																   Integer end = null; .)
+  [ "DOWNTO" number                            			    	(. end = Integer.parseInt(t.val); .)
+  ]                                           			    	(. if (expr != null) {
+																       if (end == null) {
+																           int offset=start - expr.getIndexOffset();
+																           if(offset>expr.width||offset<0){
+																               SemErr("Index out of bounds");
+																           }
+																           expr = new WidthExpression(1, expr, offset);
+																       } else {
+																           if(start<end){
+																               SemErr("DOWNTO start must be larger than end");
+																           }
+																           int offset=end - expr.getIndexOffset();
+																           if(offset>expr.width||offset<0){
+																               SemErr("Index out of bounds");
+																           }
+																           expr = new WidthExpression(start - end + 1, expr, offset);
+																       }
+																   } .)
+  ")"])
+  | Immediate<out expr>
+.
+
+Immediate<out Expression expr>                  				(. List<Boolean> values=new ArrayList<>(); .)
+  =
+  ("\"" | "'") number                                   		(. for(int i=0;i<t.val.length();i++){
+																       switch (t.val.charAt(i)) {
+																           case '0' -> values.add(false);
+																           case '1' -> values.add(true);
+																           default -> SemErr("Only values 0 or 1 allowed");
+																       }
+																   } .)
+  ("\"" | "'")                                     				(. expr = new ImmediateWire(values.size(),values); .)
+.
+
+PortMap<Architecture architecture, Instance instance>  			(. Expression expr = null; int i=0; .)
+  =
+  (Expression<out expr, architecture>
+  | "OPEN"                                                      (. expr = new PortWire(0,null);
+                                                                   if(instance.component.ports.get(i).direction==Port.Direction.IN){
+                                                                       SemErr("Cannot use OPEN for input");
+                                                                   }.)
+  )                                                             (. if (i >= instance.component.ports.size()) {
+                                                                       SemErr("port map does not match number of ports");
+                                                                   } else {
+                                                                       if(instance.component.ports.get(i).direction==Port.Direction.OUT && !expr.isAssignable()){
+                                                                           SemErr("Cannot assign to expression");
+                                                                       }
+                                                                       architecture.addPortConnection(instance, expr, i);
+                                                                   } .)
+  { ","                                                         (. i++; .)
+  (Expression<out expr, architecture>
+  | "OPEN"                                                      (. expr = new PortWire(0,null);
+                                                                   if(instance.component.ports.get(i).direction==Port.Direction.IN){
+                                                                       SemErr("Cannot use OPEN for input");
+                                                                   }.)
+  )                                                             (. if (i > instance.component.ports.size()) {
+                                                                       SemErr("port map does not match number of ports");
+                                                                   } else {
+                                                                       if(instance.component.ports.get(i).direction==Port.Direction.OUT && !expr.isAssignable()){
+                                                                           SemErr("Cannot assign to expression");
+                                                                       }
+                                                                       architecture.addPortConnection(instance, expr, i);
+                                                                   } .)
+  }                                                              (. if (i != instance.component.ports.size() - 1) {
+                                                                       SemErr("port map does not match number of ports");
+                                                                   } .)
+.
+
+END MiniVHDL.

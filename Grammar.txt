@@ -1,0 +1,50 @@
+CHARACTERS
+ letter = 'A'..'Z' + 'a'..'z' .
+ digit = '0'..'9' .
+ whitespace = ' ' + '\t' + '\n' + '\r' .
+
+TOKENS
+ ident = letter { letter | digit | "_" } .
+ number = digit { digit } .
+
+MiniVHDL = {LibraryClause | UseClause | EntityDecl | ArchitectureDecl} .
+
+LibraryClause = "LIBRARY" "IEEE" ";".
+
+UseClause = "USE" "IEEE.STD_LOGIC_1164.ALL" ";".
+
+EntityDecl = "ENTITY" ident "IS" "PORT" "(" PortList ")" ";" "END" ["ENTITY"] [ ident ] ";" .
+
+PortList = PortDecl { ";" PortDecl }.
+
+PortDecl = identList ":" Direction SubtypeInd .
+
+identList = ident { "," ident }.
+
+Direction = "IN" | "OUT" .
+
+SubtypeInd = "STD_ULOGIC" | StdLogicVectorType.
+
+StdLogicVectorType = "STD_ULOGIC_VECTOR" "(" number "DOWNTO" number ")" .
+
+ArchitectureDecl = "ARCHITECTURE" ident "OF" ident "IS" { ComponentDecl } { SignalDecl } "BEGIN" { ConcurrentStmt } "END" ["ARCHITECTURE"] [ ident ] ";".
+
+ComponentDecl = "COMPONENT" ident ["is"] "PORT" "(" PortList ")" ";" "END" "COMPONENT" [ident ] ";" .
+
+SignalDecl = "SIGNAL" identList ":" SubtypeInd ";" .
+
+ConcurrentStmt = InstantiationStmt | AssignmentStmt.
+
+AssignmentStmt = Indexedident "<=" Expression ";" .
+
+Expression = SimpleTerm { ( "XOR" | "AND" | "OR" | "NAND" | "NOR" | "XNOR" | "&" ) SimpleTerm }.
+
+SimpleTerm = [ "NOT" ] (Indexedident | number "downto" number "=>" ident [ "(" number ")" ] | "(" Expression ")") .
+
+InstantiationStmt = ident ":" ident "PORT" "MAP" "(" PortMap ")" ";".
+
+Indexedident = (ident ["(" number [ "DOWNTO" number ] ")"]) | Immediate .
+
+Immediate = ("\"" | "'") number ("\"" | "'") .
+
+PortMap = (Expression | "OPEN") { "," (Expression | "OPEN") } .
