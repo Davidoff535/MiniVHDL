@@ -131,7 +131,7 @@ Each case is handled by the compiler with an error message.
 
 
 ```bash
-java MiniVHDL.Main <input-file.vhdl> <top-level-entity>
+java -jar MiniVHDL.jar <input-file.vhdl> <top-level-entity>
 ```
 
 ### Parameters
