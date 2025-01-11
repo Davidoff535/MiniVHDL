@@ -1,5 +1,6 @@
 package MiniVHDL.Circuit.Expression;
 
+import MiniVHDL.Circuit.Port;
 import MiniVHDL.Circuit.Wire.*;
 
 /**
@@ -28,7 +29,11 @@ public abstract class Expression {
 
     public boolean isAssignable() {
         if (this instanceof Wire) {
-            return !(this instanceof ImmediateWire);
+            if(this instanceof PortWire portWire) {
+                return portWire.port==null || portWire.port.direction== Port.Direction.OUT;
+            }else{
+                return !(this instanceof ImmediateWire);
+            }
         } else if (this instanceof WidthExpression) {
             return ((WidthExpression) this).source.isAssignable();
         } else {
